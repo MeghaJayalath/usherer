@@ -24,11 +24,18 @@ class TouristGroup {
     required this.flightNumber,
     this.liveEta,
     required this.flightStatus,
-    required this.tourists,
+    required List<Tourist> tourists,
     this.sheetRow,
     this.numberPlate,
     this.driverContactInfo,
-  });
+  }) : tourists = List<Tourist>.from(tourists) {
+    this.tourists.sort((a, b) {
+      if (a.sheetRow != null && b.sheetRow != null) {
+        return a.sheetRow!.compareTo(b.sheetRow!);
+      }
+      return a.id.compareTo(b.id);
+    });
+  }
 
   Map<String, dynamic> toMap() {
     return {

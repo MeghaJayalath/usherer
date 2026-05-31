@@ -26,6 +26,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final Map<String, GlobalKey> _touristKeys = {};
   final Map<String, GlobalKey<VehicleChunkCardState>> _groupCardKeys = {};
   String? _highlightedTouristId;
+  final ScrollController _scrollController = ScrollController();
 
   Future<void> _checkAdminStatus() async {
     final status = await _storage.read(key: 'isAdmin') == 'true';
@@ -36,32 +37,68 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  void _scrollToTourist(String groupId, String touristId) {
-    // Step 1: Directly expand the card via its state (without setting highlight yet!)
-    final cardKey = _groupCardKeys[groupId];
-    cardKey?.currentState?.expand();
+  double _estimateScrollOffset(String groupId) {
+    double offset = 0.0;
+    for (final item in _controller.listItems) {
+      if (item is GroupCardItem && item.group.id == groupId) {
+        break;
+      }
+      if (item is TimeHeaderItem) {
+        offset += 50.0; // Header height including padding
+      } else if (item is GroupCardItem) {
+        offset += 160.0; // Unexpanded card height + vertical margin
+      }
+    }
+    return offset;
+  }
 
-    // Step 2: After one frame, scroll to the group card
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (cardKey != null && cardKey.currentContext != null) {
-        Scrollable.ensureVisible(
-          cardKey.currentContext!,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-          alignment: 0.0,
-        );
+  void _scrollToTourist(String groupId, String touristId) {
+    // Give time for SearchAnchor/keyboard transitions to fully complete first!
+    Future.delayed(const Duration(milliseconds: 350), () async {
+      if (!mounted) return;
+
+      final cardKey = _groupCardKeys[groupId];
+      
+      // If card key or context is null, scroll to estimated position first to force rendering
+      if (cardKey == null || cardKey.currentContext == null) {
+        final estOffset = _estimateScrollOffset(groupId);
+        if (_scrollController.hasClients) {
+          await _scrollController.animateTo(
+            estOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+          // Wait a tiny bit for the item to render after scroll
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
       }
 
-      // Step 3: Wait for the AnimatedCrossFade animation (200ms) + buffer, then scroll to tourist
-      Future.delayed(const Duration(milliseconds: 400), () {
-        if (!mounted) return;
-        final touristKey = _touristKeys[touristId];
-        if (touristKey != null && touristKey.currentContext != null) {
+      if (!mounted) return;
+
+      // Step 1: Expand the card via its state
+      cardKey?.currentState?.expand();
+
+      // Step 2: After one frame, scroll precisely to the group card
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (cardKey != null && cardKey.currentContext != null) {
           Scrollable.ensureVisible(
-            touristKey.currentContext!,
-            duration: const Duration(milliseconds: 500),
-            curve: Curves.easeInOutCubic,
-            alignment: 0.5,
+            cardKey.currentContext!,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            alignment: 0.0,
+          );
+        }
+
+        // Step 3: Wait for the AnimatedCrossFade animation (200ms) + buffer, then scroll to tourist
+        Future.delayed(const Duration(milliseconds: 400), () {
+          if (!mounted) return;
+          final touristKey = _touristKeys[touristId];
+          if (touristKey != null && touristKey.currentContext != null) {
+            Scrollable.ensureVisible(
+              touristKey.currentContext!,
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeInOutCubic,
+              alignment: 0.5,
           );
         }
 
@@ -85,7 +122,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
       });
     });
-  }
+  });
+}
+
 
   @override
   void initState() {
@@ -271,6 +310,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -569,6 +609,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ),
                               )
                             : CustomScrollView(
+                                controller: _scrollController,
                                 physics: const BouncingScrollPhysics(),
                                 cacheExtent: 600,
                                 slivers: [
