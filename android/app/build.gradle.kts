@@ -38,6 +38,32 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    applicationVariants.all {
+        val variant = this
+        variant.outputs.all {
+            val output = this as? com.android.build.gradle.api.ApkVariantOutput
+            if (output != null) {
+                val version = variant.versionName ?: "1.0.0"
+                output.outputFileName = "usherer-$version.apk"
+            }
+        }
+
+        // Copy the renamed APK to the standard flutter-apk output folder after assembling
+        variant.assembleProvider.configure {
+            doLast {
+                val version = variant.versionName ?: "1.0.0"
+                val buildDir = layout.buildDirectory.get()
+                // variant.name is "release" or "debug"
+                val src = file("$buildDir/outputs/apk/${variant.name}/usherer-$version.apk")
+                val destDir = file("$buildDir/outputs/flutter-apk")
+                if (src.exists()) {
+                    destDir.mkdirs()
+                    src.copyTo(file("$destDir/usherer-$version.apk"), overwrite = true)
+                }
+            }
+        }
+    }
 }
 
 flutter {
