@@ -16,11 +16,267 @@ class DashboardController extends ChangeNotifier {
   bool _isLoading = false;
   bool _isSyncing = false;
   Completer<void>? _syncCompleter;
+  bool _hasArrivalTab = true;
+  bool _hasDepartureTab = true;
+  bool _hasLoadedTabStatus = false;
+  bool _dateExistsInSheet = true;
+  List<String> _sheetTabNames = [];
   StreamSubscription<List<TouristGroup>>? _groupsSubscription;
 
   DashboardController({required String initialDate}) : _date = initialDate {
     _subscribeToGroups();
     TouristRepository.wipeNotifier.addListener(_onWipe);
+    updateTabStatus();
+  }
+
+  bool get hasArrivalTab => _hasArrivalTab;
+  bool get hasDepartureTab => _hasDepartureTab;
+  bool get hasLoadedTabStatus => _hasLoadedTabStatus;
+  bool get dateExistsInSheet => _dateExistsInSheet;
+  List<String> get sheetTabNames => _sheetTabNames;
+
+  String getBaseDate(String dateStr) {
+    return dateStr
+        .replaceAll(RegExp(r'\s+DEP(ARTURE)?(S)?$', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\s+ARR(IVAL)?(S)?$', caseSensitive: false), '');
+  }
+
+  String _formatSheetDate(DateTime date) {
+    final monthNames = [
+      'JAN',
+      'FEB',
+      'MAR',
+      'APR',
+      'MAY',
+      'JUNE',
+      'JULY',
+      'AUG',
+      'SEP',
+      'OCT',
+      'NOV',
+      'DEC',
+    ];
+    final monthStr = monthNames[date.month - 1];
+
+    String suffix = 'TH';
+    final day = date.day;
+    if (day >= 11 && day <= 13) {
+      suffix = 'TH';
+    } else {
+      switch (day % 10) {
+        case 1:
+          suffix = 'ST';
+          break;
+        case 2:
+          suffix = 'ND';
+          break;
+        case 3:
+          suffix = 'RD';
+          break;
+        default:
+          suffix = 'TH';
+          break;
+      }
+    }
+    return '$day$suffix $monthStr';
+  }
+
+  List<DateTime> getAvailableDates() {
+    final List<DateTime> dates = [];
+    final monthNames = [
+      'JAN',
+      'FEB',
+      'MAR',
+      'APR',
+      'MAY',
+      'JUN',
+      'JUL',
+      'AUG',
+      'SEP',
+      'OCT',
+      'NOV',
+      'DEC',
+    ];
+    for (final title in _sheetTabNames) {
+      try {
+        final cleanStr = title.trim().toUpperCase()
+            .replaceAll(RegExp(r'\s+DEP(ARTURE)?(S)?$'), '')
+            .replaceAll(RegExp(r'\s+ARR(IVAL)?(S)?$'), '');
+        
+        final parts = cleanStr.split(' ');
+        if (parts.length < 2) continue;
+
+        final dayStr = parts[0].replaceAll(RegExp(r'[^0-9]'), '');
+        final day = int.tryParse(dayStr);
+        if (day == null) continue;
+
+        final monthStr = parts[1];
+        final month = monthNames.indexWhere((m) => monthStr.startsWith(m)) + 1;
+        if (month == 0) continue;
+
+        final year = DateTime.now().year;
+        final parsedDate = DateTime(year, month, day);
+        final dayOnly = DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
+        if (!dates.any((d) => d.year == dayOnly.year && d.month == dayOnly.month && d.day == dayOnly.day)) {
+          dates.add(dayOnly);
+        }
+      } catch (_) {
+        // Ignore non-date tabs like 'Dashboard'
+      }
+    }
+    return dates;
+  }
+
+  DateTime findClosestAvailableDate(DateTime target) {
+    final avail = getAvailableDates();
+    if (avail.isEmpty) return target;
+
+    final targetDayOnly = DateTime(target.year, target.month, target.day);
+    if (avail.any((d) => d.year == targetDayOnly.year && d.month == targetDayOnly.month && d.day == targetDayOnly.day)) {
+      return targetDayOnly;
+    }
+
+    DateTime closest = avail.first;
+    int minDiff = (avail.first.difference(targetDayOnly).inDays).abs();
+    for (final d in avail) {
+      final diff = (d.difference(targetDayOnly).inDays).abs();
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = d;
+      }
+    }
+    return closest;
+  }
+
+  bool isDateAvailable(DateTime dateTime) {
+    if (_sheetTabNames.isEmpty) {
+      return true;
+    }
+    final formattedBase = _formatSheetDate(dateTime).toUpperCase().replaceAll(' ', '');
+
+    for (final title in _sheetTabNames) {
+      final cleanTitle = title.trim().toUpperCase().replaceAll(' ', '');
+      
+      String titleAlt = cleanTitle;
+      if (cleanTitle.contains('JUNE')) {
+        titleAlt = cleanTitle.replaceAll('JUNE', 'JUN');
+      } else if (cleanTitle.contains('JULY')) {
+        titleAlt = cleanTitle.replaceAll('JULY', 'JUL');
+      } else if (cleanTitle.contains('SEPTEMBER')) {
+        titleAlt = cleanTitle.replaceAll('SEPTEMBER', 'SEP');
+      }
+
+      String target1 = formattedBase + 'ARR';
+      String target2 = formattedBase + 'DEP';
+      String target3 = formattedBase;
+      
+      String formattedBaseAlt = formattedBase;
+      if (formattedBase.contains('JUNE')) {
+        formattedBaseAlt = formattedBase.replaceAll('JUNE', 'JUN');
+      } else if (formattedBase.contains('JULY')) {
+        formattedBaseAlt = formattedBase.replaceAll('JULY', 'JUL');
+      } else if (formattedBase.contains('SEPTEMBER')) {
+        formattedBaseAlt = formattedBase.replaceAll('SEPTEMBER', 'SEP');
+      }
+      
+      String target1Alt = formattedBaseAlt + 'ARR';
+      String target2Alt = formattedBaseAlt + 'DEP';
+      String target3Alt = formattedBaseAlt;
+
+      if (titleAlt == target1 ||
+          titleAlt == target1Alt ||
+          titleAlt == target2 ||
+          titleAlt == target2Alt ||
+          titleAlt == target3 ||
+          titleAlt == target3Alt) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> updateTabStatus() async {
+    try {
+      final titles = await TouristRepository.getSheetTabNames();
+      _sheetTabNames = titles;
+      if (titles.isEmpty) {
+        _hasArrivalTab = true;
+        _hasDepartureTab = true;
+        _dateExistsInSheet = true;
+        notifyListeners();
+        return;
+      }
+
+      final base = getBaseDate(_date).toUpperCase().replaceAll(' ', '');
+      
+      bool arrivalMatch = false;
+      bool departureMatch = false;
+
+      bool matchesDate(String title, String targetSuffix) {
+        final cleanTitle = title.trim().toUpperCase().replaceAll(' ', '');
+        
+        String titleAlt = cleanTitle;
+        if (cleanTitle.contains('JUNE')) {
+          titleAlt = cleanTitle.replaceAll('JUNE', 'JUN');
+        } else if (cleanTitle.contains('JULY')) {
+          titleAlt = cleanTitle.replaceAll('JULY', 'JUL');
+        } else if (cleanTitle.contains('SEPTEMBER')) {
+          titleAlt = cleanTitle.replaceAll('SEPTEMBER', 'SEP');
+        }
+
+        String target1 = base + targetSuffix;
+        String target2 = base;
+        if (base.contains('JUNE')) {
+          target2 = base.replaceAll('JUNE', 'JUN');
+        } else if (base.contains('JULY')) {
+          target2 = base.replaceAll('JULY', 'JUL');
+        } else if (base.contains('SEPTEMBER')) {
+          target2 = base.replaceAll('SEPTEMBER', 'SEP');
+        }
+        String target1Alt = target2 + targetSuffix;
+
+        return titleAlt == target1 || titleAlt == target1Alt || (targetSuffix == 'ARR' && (titleAlt == base || titleAlt == target2));
+      }
+
+      for (final title in titles) {
+        if (matchesDate(title, 'ARR')) {
+          arrivalMatch = true;
+        }
+        if (matchesDate(title, 'DEP')) {
+          departureMatch = true;
+        }
+      }
+
+      _hasArrivalTab = arrivalMatch;
+      _hasDepartureTab = departureMatch;
+      _dateExistsInSheet = arrivalMatch || departureMatch;
+
+      // Fallback: if both are false, it means the base date doesn't exist in sheet titles at all.
+      // Keep both active so we don't lock the user out.
+      if (!_hasArrivalTab && !_hasDepartureTab) {
+        _hasArrivalTab = true;
+        _hasDepartureTab = true;
+      } else {
+        // If current selected mode is not available, auto-switch to the other!
+        final currentIsDeparture = _date.endsWith(' DEP');
+        if (currentIsDeparture && !_hasDepartureTab && _hasArrivalTab) {
+          final baseDate = getBaseDate(_date);
+          _date = '$baseDate ARR';
+          await HiveCache.setCurrentDate(_date);
+          _subscribeToGroups();
+        } else if (!currentIsDeparture && !_hasArrivalTab && _hasDepartureTab) {
+          final baseDate = getBaseDate(_date);
+          _date = '$baseDate DEP';
+          await HiveCache.setCurrentDate(_date);
+          _subscribeToGroups();
+        }
+      }
+    } catch (e) {
+      print('updateTabStatus error: $e');
+    } finally {
+      _hasLoadedTabStatus = true;
+      notifyListeners();
+    }
   }
 
   String get date => _date;
@@ -182,6 +438,9 @@ class DashboardController extends ChangeNotifier {
     await HiveCache.setCurrentDate(newDate);
 
     _subscribeToGroups();
+    
+    // Dynamically update available tabs status
+    updateTabStatus();
 
     // Proactively pull latest data from Google Sheets in the background to initialize Firestore
     try {
@@ -298,6 +557,9 @@ class DashboardController extends ChangeNotifier {
     try {
       // Write sheet data to Firestore
       await TouristRepository.loadAndSyncFromSheets(_date);
+
+      // Dynamically update available tabs status (in case user added new tabs or renamed them)
+      await updateTabStatus();
 
       // Now wait for the Firestore stream to deliver the updated snapshot (with a safety timeout)
       await _syncCompleter!.future.timeout(

@@ -6,6 +6,7 @@ import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_typography.dart';
+import 'core/theme/theme_manager.dart';
 import 'core/services/sheets_service.dart';
 import 'core/services/notification_service.dart';
 import 'data/local/hive_cache.dart';
@@ -27,13 +28,33 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late Future<void> _initFuture;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initFuture = _initializeApp();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Proactively refresh the Sheets OAuth2 client when the app comes back
+  /// to the foreground. On iOS the HTTP auth client can silently expire while
+  /// the app is backgrounded, so re-initializing here ensures it is always
+  /// fresh before the user ticks any checkboxes.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      SheetsService().forceReinitialize().catchError((e) {
+        print('Sheets client refresh on resume failed: $e');
+      });
+    }
   }
 
   Future<void> _initializeApp() async {
@@ -44,6 +65,9 @@ class _MyAppState extends State<MyApp> {
 
     // B. Initialize Hive local cache and register TypeAdapters
     await HiveCache.init();
+
+    // Initialize ThemeManager with the persisted theme settings
+    ThemeManager.init();
 
     // Clear the old default hardcoded sheet ID if present
     if (HiveCache.getSpreadsheetId() ==
@@ -59,13 +83,68 @@ class _MyAppState extends State<MyApp> {
     await sheetsService.init();
 
     final todayStr = _getTodayFormatted();
-    final activeDate = HiveCache.getCurrentDate(todayStr);
 
-    // Write today's default if not set
-    await HiveCache.setCurrentDate(activeDate);
+    // Fetch tab names to check if today is configured in the sheet
+    List<String> tabNames = [];
+    try {
+      tabNames = await sheetsService.getSheetTabNames();
+    } catch (e) {
+      print('Failed to get sheet tab names during init: $e');
+    }
 
-    // E. Perform Sheets synchronization in the background (NON-blocking!)
-    _syncSheetsInBackground(activeDate);
+    bool todayExists = false;
+    String targetTab = '$todayStr ARR';
+
+    if (tabNames.isNotEmpty) {
+      final baseToday = todayStr.toUpperCase().replaceAll(' ', '');
+      for (final title in tabNames) {
+        final cleanTitle = title.trim().toUpperCase().replaceAll(' ', '');
+        String titleAlt = cleanTitle;
+        if (cleanTitle.contains('JUNE')) {
+          titleAlt = cleanTitle.replaceAll('JUNE', 'JUN');
+        } else if (cleanTitle.contains('JULY')) {
+          titleAlt = cleanTitle.replaceAll('JULY', 'JUL');
+        } else if (cleanTitle.contains('SEPTEMBER')) {
+          titleAlt = cleanTitle.replaceAll('SEPTEMBER', 'SEP');
+        }
+
+        String target1 = baseToday + 'ARR';
+        String target2 = baseToday + 'DEP';
+        String target3 = baseToday;
+        
+        String baseTodayAlt = baseToday;
+        if (baseToday.contains('JUNE')) {
+          baseTodayAlt = baseToday.replaceAll('JUNE', 'JUN');
+        } else if (baseToday.contains('JULY')) {
+          baseTodayAlt = baseToday.replaceAll('JULY', 'JUL');
+        } else if (baseToday.contains('SEPTEMBER')) {
+          baseTodayAlt = baseToday.replaceAll('SEPTEMBER', 'SEP');
+        }
+        
+        String target1Alt = baseTodayAlt + 'ARR';
+        String target2Alt = baseTodayAlt + 'DEP';
+        String target3Alt = baseTodayAlt;
+
+        if (titleAlt == target1 || titleAlt == target1Alt || titleAlt == target3 || titleAlt == target3Alt) {
+          todayExists = true;
+          targetTab = title;
+          break;
+        } else if (titleAlt == target2 || titleAlt == target2Alt) {
+          todayExists = true;
+          targetTab = title;
+          break;
+        }
+      }
+    }
+
+    String initialDate = '';
+    if (todayExists) {
+      initialDate = targetTab;
+      await HiveCache.setCurrentDate(initialDate);
+      _syncSheetsInBackground(initialDate);
+    } else {
+      await HiveCache.setCurrentDate('');
+    }
 
     // F. If administrator, initialize Workmanager and launch periodic task
     const storage = FlutterSecureStorage();
@@ -83,6 +162,7 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<void> _syncSheetsInBackground(String activeDate) async {
+    if (activeDate.isEmpty) return;
     try {
       await TouristRepository.loadAndSyncFromSheets(activeDate);
       print('Initial data sync from Google Sheets succeeded.');
@@ -93,77 +173,91 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Usherer',
-      theme: AppTheme.dark,
-      debugShowCheckedModeBanner: false,
-      home: FutureBuilder<void>(
-        future: _initFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Scaffold(
-              backgroundColor: AppColors.background,
-              body: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Image.asset(
-                      'assets/logo.png',
-                      height: 120,
-                      fit: BoxFit.contain,
-                    ),
-                    const SizedBox(height: 24),
-                    const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                        color: AppColors.accent,
-                        strokeWidth: 2.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeManager.themeModeNotifier,
+      builder: (context, themeMode, _) {
+        final systemBrightness = MediaQuery.platformBrightnessOf(context);
+        final isDark =
+            themeMode == ThemeMode.dark ||
+            (themeMode == ThemeMode.system &&
+                systemBrightness == Brightness.dark);
+        AppColors.updateTheme(isDark);
 
-          if (snapshot.hasError) {
-            return Scaffold(
-              backgroundColor: AppColors.background,
-              body: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.error_outline,
-                        color: AppColors.accent,
-                        size: 48,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Initialization Failed',
-                        style: AppTypography.titleMedium.copyWith(
-                          color: AppColors.textPrimary,
+        return MaterialApp(
+          title: 'Usherer',
+          theme: AppTheme.light,
+          darkTheme: AppTheme.dark,
+          themeMode: themeMode,
+          debugShowCheckedModeBanner: false,
+          home: FutureBuilder<void>(
+            future: _initFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return Scaffold(
+                  backgroundColor: AppColors.background,
+                  body: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Image.asset(
+                          'assets/icon.png',
+                          height: 120,
+                          fit: BoxFit.contain,
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        snapshot.error.toString(),
-                        style: AppTypography.bodySecondary,
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+                        const SizedBox(height: 24),
+                        const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: AppColors.accent,
+                            strokeWidth: 2.5,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ),
-            );
-          }
+                );
+              }
 
-          return const DashboardScreen();
-        },
-      ),
+              if (snapshot.hasError) {
+                return Scaffold(
+                  backgroundColor: AppColors.background,
+                  body: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            color: AppColors.accent,
+                            size: 48,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Initialization Failed',
+                            style: AppTypography.titleMedium.copyWith(
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            snapshot.error.toString(),
+                            style: AppTypography.bodySecondary,
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              return const DashboardScreen();
+            },
+          ),
+        );
+      },
     );
   }
 }

@@ -10,6 +10,10 @@ class FirestoreService {
   // Stream all groups for a date - attach on dashboard init
   // Securely gates data loading based on whether a sheet URL is actively configured
   Stream<List<TouristGroup>> watchGroups(String date) async* {
+    if (date.isEmpty) {
+      yield <TouristGroup>[];
+      return;
+    }
     final sessionDoc = _firestore.collection('sessions').doc(date);
     await for (final sessionSnap in sessionDoc.snapshots()) {
       final data = sessionSnap.data();

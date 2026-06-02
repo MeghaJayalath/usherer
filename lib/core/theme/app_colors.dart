@@ -2,20 +2,24 @@ import 'package:flutter/material.dart';
 import '../../data/models/flight.dart';
 
 class AppColors {
-  static const Color background = Color(
-    0xFF000000,
-  ); // AMOLED true black scaffold
-  static const Color surface = Color(0xFF0D0D0D); // Cards
-  static const Color surfaceHigh = Color(0xFF161616); // Modals, bottom sheets
-  static const Color border = Color(0xFF1F1F1F); // Borders for cards/chips
+  static bool _isDark = true;
+
+  static bool get isDark => _isDark;
+
+  static void updateTheme(bool dark) {
+    _isDark = dark;
+  }
+
+  static Color get background => _isDark ? const Color(0xFF000000) : const Color(0xFFF0EFE6);
+  static Color get surface => _isDark ? const Color(0xFF0D0D0D) : const Color(0xFFFFFFFF);
+  static Color get surfaceHigh => _isDark ? const Color(0xFF161616) : const Color(0xFFFFFFFF);
+  static Color get border => _isDark ? const Color(0xFF1F1F1F) : const Color(0xFFE3E2D9);
 
   static const Color accent = Color(0xFFE8704A); // Coral CTA/Active
-  static const Color accentMuted = Color(0x1AE8704A); // Coral at 10% opacity
+  static Color get accentMuted => _isDark ? const Color(0x1AE8704A) : const Color(0x26E8704A);
 
-  static const Color textPrimary = Color(0xFFF2E8D9); // Warm cream
-  static const Color textSecondary = Color(
-    0x99F2E8D9,
-  ); // Warm cream at 60% opacity
+  static Color get textPrimary => _isDark ? const Color(0xFFF2E8D9) : const Color(0xFF2C2621);
+  static Color get textSecondary => _isDark ? const Color(0x99F2E8D9) : const Color(0xFF7D7267);
 
   static const Color arrived = Color(0xFF4CAF50); // Green
   static const Color delayed = Color(0xFFFFC727); // Yellow
@@ -79,8 +83,8 @@ class AppColors {
     }
   }
 
-  static const Color vipGold = Color(0xFFFFC727); // Gold / VIP indicator
-  static const Color vipGoldMuted = Color(0x1AFFC727); // Gold at 10% opacity
+  static Color get vipGold => _isDark ? const Color(0xFFFFC727) : const Color(0xFFC29100); // Gold / VIP indicator
+  static Color get vipGoldMuted => _isDark ? const Color(0x1AFFC727) : const Color(0x20C29100); // Gold at 10% opacity
 
   static Color getTouristTileBgColor({
     required bool pickUp,
@@ -141,8 +145,8 @@ class AppColors {
     return (pickUp && dropOff) ? textSecondary.withValues(alpha: 0.5) : textPrimary;
   }
 
-  static Color getTouristTileCheckboxColor({required bool active, Color defaultColor = textSecondary}) {
-    return active ? arrived : defaultColor;
+  static Color getTouristTileCheckboxColor({required bool active, Color? defaultColor}) {
+    return active ? arrived : (defaultColor ?? textSecondary);
   }
 
   static Color getTouristTileArrivedTimeColor() {

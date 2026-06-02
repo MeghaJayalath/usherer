@@ -149,7 +149,7 @@ class _FlightChunkCardState extends State<FlightChunkCard> {
                             const SizedBox(height: 4),
                             Row(
                               children: [
-                                const Icon(
+                                Icon(
                                   Icons.airport_shuttle_outlined,
                                   color: AppColors.textSecondary,
                                   size: 14,
@@ -202,7 +202,7 @@ class _FlightChunkCardState extends State<FlightChunkCard> {
                       ),
                     ],
                   ),
-                  const Divider(color: AppColors.border, height: 24),
+                  Divider(color: AppColors.border, height: 24),
                   // Time section
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -320,8 +320,8 @@ class _FlightChunkCardState extends State<FlightChunkCard> {
             secondChild: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.0),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: Divider(color: AppColors.border, height: 1),
                 ),
                 const SizedBox(height: 10),

@@ -1,7 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_typography.dart';
 import 'dashboard_controller.dart';
@@ -22,11 +21,155 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   late DashboardController _controller;
   bool _isAdmin = false;
+  bool _autoDatePickerShown = false;
   final _storage = const FlutterSecureStorage();
   final Map<String, GlobalKey> _touristKeys = {};
   final Map<String, GlobalKey<VehicleChunkCardState>> _groupCardKeys = {};
   String? _highlightedTouristId;
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _searchTextController = TextEditingController();
+
+  /// Opens a custom search dialog backed by the live _controller.groups data.
+  /// Unlike SearchAnchor, this rebuilds results on every keystroke using
+  /// StatefulBuilder, so it never shows stale or empty results.
+  void _openSearch() {
+    _searchTextController.clear();
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final query = _searchTextController.text.toLowerCase();
+            final groups = _controller.groups; // always live snapshot
+
+            final List<({TouristGroup group, dynamic tourist})> results = [];
+            for (final group in groups) {
+              for (final tourist in group.tourists) {
+                if (query.isEmpty || tourist.name.toLowerCase().contains(query)) {
+                  results.add((group: group, tourist: tourist));
+                }
+              }
+            }
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 60),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  color: AppColors.surface,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Search bar
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: TextField(
+                          controller: _searchTextController,
+                          autofocus: true,
+                          style: AppTypography.bodyPrimary,
+                          cursorColor: AppColors.accent,
+                          onChanged: (_) => setDialogState(() {}),
+                          decoration: InputDecoration(
+                            hintText: 'Search tourist name...',
+                            hintStyle: AppTypography.bodySecondary,
+                            prefixIcon: Icon(Icons.search_rounded, color: AppColors.textSecondary, size: 22),
+                            suffixIcon: _searchTextController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: Icon(Icons.clear_rounded, color: AppColors.textSecondary, size: 18),
+                                    onPressed: () {
+                                      _searchTextController.clear();
+                                      setDialogState(() {});
+                                    },
+                                  )
+                                : null,
+                            filled: true,
+                            fillColor: AppColors.surfaceHigh,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      // Results
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.of(context).size.height * 0.5,
+                        ),
+                        child: results.isEmpty
+                            ? Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.person_search_outlined,
+                                        color: AppColors.textSecondary.withValues(alpha: 0.4), size: 40),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      query.isEmpty ? 'Start typing to search...' : 'No matching tourists found',
+                                      style: AppTypography.bodySecondary.copyWith(fontSize: 14),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ListView.separated(
+                                shrinkWrap: true,
+                                itemCount: results.length,
+                                separatorBuilder: (_, __) => Divider(
+                                  height: 1,
+                                  color: AppColors.border,
+                                  indent: 64,
+                                ),
+                                itemBuilder: (context, i) {
+                                  final group = results[i].group;
+                                  final tourist = results[i].tourist;
+                                  return ListTile(
+                                    leading: CircleAvatar(
+                                      backgroundColor: AppColors.accent.withValues(alpha: 0.1),
+                                      child: Text(
+                                        tourist.name.isNotEmpty ? tourist.name[0].toUpperCase() : '?',
+                                        style: const TextStyle(
+                                          color: AppColors.accent,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(
+                                      tourist.name,
+                                      style: AppTypography.bodyPrimary.copyWith(fontWeight: FontWeight.bold),
+                                    ),
+                                    subtitle: Text(
+                                      '${group.vehicleType.toUpperCase()} (${group.numberPlate ?? "No Plate"}) • ${group.flightNumber}',
+                                      style: AppTypography.bodySecondary.copyWith(fontSize: 12),
+                                    ),
+                                    trailing: Icon(
+                                      Icons.arrow_forward_ios_rounded,
+                                      size: 14,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                    onTap: () {
+                                      Navigator.of(dialogContext).pop();
+                                      _scrollToTourist(group.id, tourist.id);
+                                    },
+                                  );
+                                },
+                              ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 
   Future<void> _checkAdminStatus() async {
     final status = await _storage.read(key: 'isAdmin') == 'true';
@@ -52,120 +195,198 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return offset;
   }
 
-  void _scrollToTourist(String groupId, String touristId) {
-    // Give time for SearchAnchor/keyboard transitions to fully complete first!
-    Future.delayed(const Duration(milliseconds: 350), () async {
-      if (!mounted) return;
+  void _scrollToTourist(String groupId, String touristId) async {
+    // Give time for keyboard and any overlay transitions to complete
+    await Future.delayed(const Duration(milliseconds: 350));
+    if (!mounted) return;
 
-      var cardKey = _groupCardKeys[groupId];
-      
-      // If card key or context is null, scroll to estimated position first to force rendering
-      if (cardKey == null || cardKey.currentContext == null) {
-        final estOffset = _estimateScrollOffset(groupId);
-        if (_scrollController.hasClients) {
-          await _scrollController.animateTo(
-            estOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-          // Wait a tiny bit for the item to render after scroll
-          await Future.delayed(const Duration(milliseconds: 100));
-        }
-        
-        // RE-FETCH the key now that the list item has built!
-        cardKey = _groupCardKeys[groupId];
+    var cardKey = _groupCardKeys[groupId];
+
+    // If card key or context is null, scroll to estimated position first to force rendering
+    if (cardKey == null || cardKey.currentContext == null) {
+      final estOffset = _estimateScrollOffset(groupId);
+      if (_scrollController.hasClients) {
+        await _scrollController.animateTo(
+          estOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
       }
+      cardKey = _groupCardKeys[groupId];
+    }
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      // Step 1: Expand the card via its state
-      cardKey?.currentState?.expand();
+    // Step 1: Expand the card
+    cardKey?.currentState?.expand();
 
-      // Step 2: After one frame, scroll precisely to the group card
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        // Re-fetch just in case it mounted in the current frame
-        cardKey ??= _groupCardKeys[groupId];
-        
-        if (cardKey != null && cardKey!.currentContext != null) {
-          Scrollable.ensureVisible(
-            cardKey!.currentContext!,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-            alignment: 0.0,
-          );
-        }
+    // Step 2: Wait one frame for layout, then scroll to the group card
+    await Future.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
 
-        // Step 3: Wait for the AnimatedCrossFade animation (200ms) + buffer, then scroll to tourist
-        Future.delayed(const Duration(milliseconds: 400), () {
-          if (!mounted) return;
-          final touristKey = _touristKeys[touristId];
-          if (touristKey != null && touristKey.currentContext != null) {
-            Scrollable.ensureVisible(
-              touristKey.currentContext!,
-              duration: const Duration(milliseconds: 500),
-              curve: Curves.easeInOutCubic,
-              alignment: 0.5,
-          );
-        }
+    cardKey ??= _groupCardKeys[groupId];
+    if (cardKey != null && cardKey.currentContext != null) {
+      await Scrollable.ensureVisible(
+        cardKey.currentContext!,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+        alignment: 0.0,
+      );
+    }
 
-        // Step 4: Wait for the 500ms scroll animation to complete, THEN trigger the ripple highlight!
-        Future.delayed(const Duration(milliseconds: 550), () {
-          if (!mounted) return;
-          setState(() {
-            _highlightedTouristId = touristId;
-          });
+    // Step 3: Wait for AnimatedCrossFade to expand, then scroll to tourist
+    await Future.delayed(const Duration(milliseconds: 350));
+    if (!mounted) return;
 
-          // Step 5: After showing the gorgeous double ripple pulse for 2.4s, reset the highlight state
-          Future.delayed(const Duration(milliseconds: 2400), () {
-            if (mounted) {
-              setState(() {
-                if (_highlightedTouristId == touristId) {
-                  _highlightedTouristId = null;
-                }
-              });
-            }
-          });
-        });
-      });
+    final touristKey = _touristKeys[touristId];
+    if (touristKey != null && touristKey.currentContext != null) {
+      await Scrollable.ensureVisible(
+        touristKey.currentContext!,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOutCubic,
+        alignment: 0.5,
+      );
+    }
+
+    // Step 4: Trigger the ripple highlight after scroll settles
+    await Future.delayed(const Duration(milliseconds: 550));
+    if (!mounted) return;
+    setState(() {
+      _highlightedTouristId = touristId;
     });
-  });
-}
 
+    // Step 5: Clear highlight after the pulse animation finishes
+    await Future.delayed(const Duration(milliseconds: 2400));
+    if (mounted) {
+      setState(() {
+        if (_highlightedTouristId == touristId) {
+          _highlightedTouristId = null;
+        }
+      });
+    }
+  }
+
+
+
+  Widget _buildModeToggleOption({
+    required String label,
+    required IconData icon,
+    required bool isDepartureOption,
+  }) {
+    final currentModeIsDeparture = _controller.date.endsWith(' DEP');
+    final isSelected = _controller.date.isNotEmpty && (currentModeIsDeparture == isDepartureOption);
+    final isEnabled = _controller.date.isNotEmpty && (isDepartureOption ? _controller.hasDepartureTab : _controller.hasArrivalTab);
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          if (!isEnabled || isSelected) return;
+          final base = _getBaseDate(_controller.date);
+          final newDate = isDepartureOption ? '$base DEP' : '$base ARR';
+          _controller.changeDate(newDate);
+        },
+        child: Opacity(
+          opacity: isEnabled ? 1.0 : 0.4,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: isSelected ? AppColors.accentMuted : AppColors.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isSelected ? AppColors.accent : AppColors.border,
+                width: isSelected ? 1.5 : 1.0,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  color: isSelected ? AppColors.accent : AppColors.textSecondary,
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: AppTypography.bodyPrimary.copyWith(
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    color: isSelected ? AppColors.accent : AppColors.textSecondary,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _getBaseDate(String dateStr) {
+    return dateStr
+        .replaceAll(RegExp(r'\s+DEP(ARTURE)?(S)?$', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\s+ARR(IVAL)?(S)?$', caseSensitive: false), '');
+  }
 
   @override
   void initState() {
     super.initState();
     _checkAdminStatus();
     final todayStr = _getTodayFormatted();
-    final cachedDate = HiveCache.getCurrentDate(todayStr);
+    final cachedDate = HiveCache.getCurrentDate('');
 
-    String initialDate = todayStr;
-    try {
-      final cachedDateTime = _parseSheetDate(cachedDate);
-      final todayDateTime = _parseSheetDate(todayStr);
+    String initialDate = '';
 
-      final cachedDayOnly = DateTime(
-        cachedDateTime.year,
-        cachedDateTime.month,
-        cachedDateTime.day,
-      );
-      final todayDayOnly = DateTime(
-        todayDateTime.year,
-        todayDateTime.month,
-        todayDateTime.day,
-      );
-
-      if (cachedDayOnly.isBefore(todayDayOnly)) {
-        initialDate = todayStr;
-        HiveCache.setCurrentDate(todayStr);
-      } else {
-        initialDate = cachedDate;
+    if (cachedDate.isNotEmpty) {
+      // Normalize date: default to ARR suffix if not present
+      String normalizedCachedDate = cachedDate;
+      if (!normalizedCachedDate.endsWith(' ARR') && !normalizedCachedDate.endsWith(' DEP')) {
+        normalizedCachedDate = '$normalizedCachedDate ARR';
       }
-    } catch (_) {
-      initialDate = todayStr;
+
+      initialDate = '${todayStr} ARR';
+      try {
+        final cachedDateTime = _parseSheetDate(normalizedCachedDate);
+        final todayDateTime = _parseSheetDate(todayStr);
+
+        final cachedDayOnly = DateTime(
+          cachedDateTime.year,
+          cachedDateTime.month,
+          cachedDateTime.day,
+        );
+        final todayDayOnly = DateTime(
+          todayDateTime.year,
+          todayDateTime.month,
+          todayDateTime.day,
+        );
+
+        if (cachedDayOnly.isBefore(todayDayOnly)) {
+          initialDate = '';
+        } else {
+          initialDate = normalizedCachedDate;
+        }
+      } catch (_) {
+        initialDate = '';
+      }
     }
 
     _controller = DashboardController(initialDate: initialDate);
+    _controller.addListener(_onControllerChanged);
+  }
+
+  void _onControllerChanged() {
+    if (!_autoDatePickerShown &&
+        _controller.hasLoadedTabStatus &&
+        !_controller.dateExistsInSheet) {
+      _autoDatePickerShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _showDatePicker(context);
+        }
+      });
+    }
   }
 
   String _getTodayFormatted() {
@@ -212,7 +433,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   DateTime _parseSheetDate(String dateStr) {
     try {
-      final cleanStr = dateStr.trim().toUpperCase();
+      // Strip any DEP/ARR suffixes
+      final cleanStr = dateStr.trim().toUpperCase()
+          .replaceAll(RegExp(r'\s+DEP(ARTURE)?(S)?$'), '')
+          .replaceAll(RegExp(r'\s+ARR(IVAL)?(S)?$'), '');
+      
       final parts = cleanStr.split(' ');
       if (parts.length < 2) return DateTime.now();
 
@@ -246,30 +471,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _showDatePicker(BuildContext context) async {
     final now = DateTime.now();
-    final initialDate = _parseSheetDate(_controller.date);
+    final parsedTargetDate = _parseSheetDate(_controller.date);
+    final initialDate = _controller.findClosestAvailableDate(parsedTargetDate);
     final pickedDate = await showDatePicker(
       context: context,
       initialDate: initialDate,
       firstDate: DateTime(now.year - 1),
       lastDate: DateTime(now.year + 1),
+      selectableDayPredicate: (day) => _controller.isDateAvailable(day),
       builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.dark(
-              primary: AppColors.accent,
-              onPrimary: AppColors.textPrimary,
-              surface: AppColors.surfaceHigh,
-              onSurface: AppColors.textPrimary,
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: IgnorePointer(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.15),
+                  ),
+                ),
+              ),
             ),
-          ),
-          child: child!,
+            Theme(
+              data: Theme.of(context).copyWith(
+                colorScheme: ColorScheme.dark(
+                  primary: AppColors.accent,
+                  onPrimary: AppColors.textPrimary,
+                  surface: AppColors.surfaceHigh,
+                  onSurface: AppColors.textPrimary,
+                ),
+              ),
+              child: child!,
+            ),
+          ],
         );
       },
     );
 
     if (pickedDate != null) {
-      final formatted = _formatSheetDate(pickedDate);
-      _controller.changeDate(formatted);
+      final formattedBase = _formatSheetDate(pickedDate);
+      
+      // Preserve the current mode suffix
+      final isCurrentlyDeparture = _controller.date.endsWith(' DEP');
+      final newDate = isCurrentlyDeparture ? '$formattedBase DEP' : '$formattedBase ARR';
+      
+      _controller.changeDate(newDate);
     }
   }
 
@@ -315,13 +561,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    _controller.removeListener(_onControllerChanged);
     _controller.dispose();
     _scrollController.dispose();
+    _searchTextController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!_autoDatePickerShown &&
+        _controller.hasLoadedTabStatus &&
+        !_controller.dateExistsInSheet) {
+      _autoDatePickerShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showDatePicker(context);
+      });
+    }
+
     return ListenableBuilder(
       listenable: _controller,
       builder: (context, _) {
@@ -356,7 +613,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             actions: [
               if (_isAdmin)
                 IconButton(
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.sync_rounded,
                     color: AppColors.textPrimary,
                     size: 26,
@@ -380,91 +637,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }
                   },
                 ),
-              SearchAnchor(
-                viewBackgroundColor: AppColors.surface,
-                viewSurfaceTintColor: Colors.transparent,
-                viewElevation: 0,
-                viewHintText: 'Search tourist name...',
-                headerTextStyle: AppTypography.bodyPrimary,
-                headerHintStyle: AppTypography.bodySecondary,
-                builder: (BuildContext context, SearchController controller) {
-                  return IconButton(
-                    icon: const Icon(
-                      Icons.search_rounded,
-                      color: AppColors.textPrimary,
-                      size: 26,
-                    ),
-                    onPressed: () {
-                      controller.openView();
-                    },
-                  );
-                },
-                suggestionsBuilder: (BuildContext context, SearchController controller) {
-                  final String query = controller.text.toLowerCase();
-                  final List<Widget> results = [];
-
-                  for (final group in _controller.groups) {
-                    for (final tourist in group.tourists) {
-                      if (tourist.name.toLowerCase().contains(query)) {
-                        results.add(
-                          ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: AppColors.accent.withValues(alpha: 0.1),
-                              child: Text(
-                                tourist.name.isNotEmpty ? tourist.name[0].toUpperCase() : '',
-                                style: const TextStyle(
-                                  color: AppColors.accent,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            title: Text(
-                              tourist.name,
-                              style: AppTypography.bodyPrimary.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            subtitle: Text(
-                              '${group.vehicleType.toUpperCase()} (${group.numberPlate ?? "No Plate"}) • ${group.flightNumber}',
-                              style: AppTypography.bodySecondary.copyWith(fontSize: 12),
-                            ),
-                            trailing: const Icon(
-                              Icons.arrow_forward_ios_rounded,
-                              size: 14,
-                              color: AppColors.textSecondary,
-                            ),
-                            onTap: () {
-                              controller.closeView(tourist.name);
-                              _scrollToTourist(group.id, tourist.id);
-                            },
-                          ),
-                        );
-                      }
-                    }
-                  }
-
-                  if (results.isEmpty) {
-                    return [
-                      const Padding(
-                        padding: EdgeInsets.all(24.0),
-                        child: Center(
-                          child: Text(
-                            'No matching tourists found',
-                            style: TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ];
-                  }
-
-                  return results;
-                },
+              IconButton(
+                icon: Icon(
+                  Icons.search_rounded,
+                  color: AppColors.textPrimary,
+                  size: 26,
+                ),
+                onPressed: () => _openSearch(),
               ),
               IconButton(
-                icon: const Icon(
+                icon: Icon(
                   Icons.settings_outlined,
                   color: AppColors.textPrimary,
                   size: 26,
@@ -506,7 +688,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             children: [
                               Flexible(
                                 child: Text(
-                                  _controller.date.toUpperCase(),
+                                  _controller.date.isEmpty
+                                      ? "SELECT DATE"
+                                      : _getBaseDate(_controller.date).toUpperCase(),
                                   style: AppTypography.displayHeader,
                                 ),
                               ),
@@ -541,6 +725,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                           ),
                         ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Arrivals / Departures Segmented Toggle
+                  Row(
+                    children: [
+                      _buildModeToggleOption(
+                        label: 'ARRIVALS',
+                        icon: Icons.flight_land_rounded,
+                        isDepartureOption: false,
+                      ),
+                      const SizedBox(width: 8),
+                      _buildModeToggleOption(
+                        label: 'DEPARTURES',
+                        icon: Icons.flight_takeoff_rounded,
+                        isDepartureOption: true,
                       ),
                     ],
                   ),
@@ -597,7 +799,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       AppConfig.spreadsheetId == null ||
                                               AppConfig.spreadsheetId!.isEmpty
                                           ? 'No Sheet Configured'
-                                          : 'No Groups Synchronized',
+                                          : (_controller.date.isEmpty
+                                              ? 'No Date Selected'
+                                              : 'No Groups Synchronized'),
                                       style: AppTypography.titleMedium.copyWith(
                                         color: AppColors.textSecondary,
                                       ),
@@ -607,7 +811,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       AppConfig.spreadsheetId == null ||
                                               AppConfig.spreadsheetId!.isEmpty
                                           ? 'Go to Settings to set up your Google Sheet.'
-                                          : 'Tap the sync button or pick another date.',
+                                          : (_controller.date.isEmpty
+                                              ? 'Tap the calendar header above to select a date.'
+                                              : 'Tap the sync button or pick another date.'),
                                       style: AppTypography.bodySecondary,
                                       textAlign: TextAlign.center,
                                     ),
@@ -695,7 +901,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Divider(
               color: AppColors.border,
               thickness: 1,

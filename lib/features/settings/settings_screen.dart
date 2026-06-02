@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_typography.dart';
 import '../settings/admin_unlock_dialog.dart';
@@ -7,6 +9,7 @@ import '../../data/local/hive_cache.dart';
 import '../../core/services/firestore_service.dart';
 import '../../data/repositories/tourist_repository.dart';
 import '../../app_config.dart';
+import '../../core/theme/theme_manager.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -27,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // Sheet ID
   final TextEditingController _sheetIdController = TextEditingController();
+  late TapGestureRecognizer _bespokeTapRecognizer;
 
   @override
   void initState() {
@@ -35,13 +39,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _checkAdminStatus();
     _loadSheetId();
     _sheetIdController.addListener(_onSheetIdChanged);
+    _bespokeTapRecognizer = TapGestureRecognizer()..onTap = _launchBespokeUrl;
   }
 
   @override
   void dispose() {
     _sheetIdController.removeListener(_onSheetIdChanged);
     _sheetIdController.dispose();
+    _bespokeTapRecognizer.dispose();
     super.dispose();
+  }
+
+  Future<void> _launchBespokeUrl() async {
+    final url = Uri.parse('https://bespokebuilds.app');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
   }
 
   void _onSheetIdChanged() {
@@ -359,6 +372,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Widget _buildThemeOption({
+    required String label,
+    required IconData icon,
+    required ThemeMode themeMode,
+  }) {
+    final currentMode = ThemeManager.themeModeNotifier.value;
+    final isSelected = currentMode == themeMode;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () async {
+          await ThemeManager.setThemeMode(themeMode);
+          setState(() {});
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.accentMuted : AppColors.background,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? AppColors.accent : AppColors.border,
+              width: isSelected ? 1.5 : 1.0,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                color: isSelected ? AppColors.accent : AppColors.textSecondary,
+                size: 20,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: AppTypography.bodyPrimary.copyWith(
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  color: isSelected
+                      ? AppColors.accent
+                      : AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
@@ -367,32 +429,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       onTap: () => FocusScope.of(context).unfocus(),
       behavior: HitTestBehavior.opaque,
       child: Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
         backgroundColor: AppColors.background,
-        scrolledUnderElevation: 0,
-        title: Text(
-          'SETTINGS',
-          style: AppTypography.titleMedium.copyWith(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 2.0,
-            fontSize: 18,
+        appBar: AppBar(
+          backgroundColor: AppColors.background,
+          scrolledUnderElevation: 0,
+          title: Text(
+            'SETTINGS',
+            style: AppTypography.titleMedium.copyWith(
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2.0,
+              fontSize: 18,
+            ),
           ),
         ),
-      ),
-      body: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
+        body: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                         // Settings group
                         Container(
                           decoration: BoxDecoration(
@@ -431,6 +493,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     );
                                   },
                                 ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Appearance group
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: AppColors.surface,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.palette_outlined,
+                                    color: AppColors.accent,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    'APPEARANCE',
+                                    style: AppTypography.labelChip.copyWith(
+                                      color: AppColors.accent,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 1.0,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              Divider(color: AppColors.border, height: 1),
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  _buildThemeOption(
+                                    label: 'System',
+                                    icon: Icons.brightness_auto_rounded,
+                                    themeMode: ThemeMode.system,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  _buildThemeOption(
+                                    label: 'Light',
+                                    icon: Icons.light_mode_rounded,
+                                    themeMode: ThemeMode.light,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  _buildThemeOption(
+                                    label: 'Dark',
+                                    icon: Icons.dark_mode_rounded,
+                                    themeMode: ThemeMode.dark,
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -482,10 +602,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 16),
-                                const Divider(
-                                  color: AppColors.border,
-                                  height: 1,
-                                ),
+                                Divider(color: AppColors.border, height: 1),
                                 const SizedBox(height: 16),
 
                                 Row(
@@ -511,7 +628,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                             borderRadius: BorderRadius.circular(
                                               10,
                                             ),
-                                            borderSide: const BorderSide(
+                                            borderSide: BorderSide(
                                               color: AppColors.border,
                                             ),
                                           ),
@@ -519,7 +636,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                             borderRadius: BorderRadius.circular(
                                               10,
                                             ),
-                                            borderSide: const BorderSide(
+                                            borderSide: BorderSide(
                                               color: AppColors.border,
                                             ),
                                           ),
@@ -568,7 +685,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                                 borderRadius:
                                                     BorderRadius.circular(10),
                                                 side: isSaveDisabled
-                                                    ? const BorderSide(
+                                                    ? BorderSide(
                                                         color: AppColors.border,
                                                       )
                                                     : BorderSide.none,
@@ -632,7 +749,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               children: [
                                 Row(
                                   children: [
-                                    const Icon(
+                                    Icon(
                                       Icons.vpn_key_outlined,
                                       color: AppColors.vipGold,
                                     ),
@@ -663,12 +780,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 16),
-                                const Divider(
-                                  color: AppColors.border,
-                                  height: 1,
-                                ),
+                                Divider(color: AppColors.border, height: 1),
                                 const SizedBox(height: 16),
-                                ...AppConfig.flightApiKeys.asMap().entries.map((entry) {
+                                ...AppConfig.flightApiKeys.asMap().entries.map((
+                                  entry,
+                                ) {
                                   final idx = entry.key;
                                   final key = entry.value;
                                   final quotas = HiveCache.getApiKeyQuotas();
@@ -681,53 +797,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       ? '${key.substring(0, 6)}...${key.substring(key.length - 6)}'
                                       : key;
 
-                                  final percent = (limit != null && limit > 0 && remaining != null)
+                                  final percent =
+                                      (limit != null &&
+                                          limit > 0 &&
+                                          remaining != null)
                                       ? (remaining / limit)
                                       : 1.0;
 
-                                  Color progressColor = AppColors.arrived; // Green for healthy
+                                  Color progressColor =
+                                      AppColors.arrived; // Green for healthy
                                   if (percent < 0.2) {
-                                    progressColor = AppColors.accent; // Coral/Red for critical
+                                    progressColor = AppColors
+                                        .accent; // Coral/Red for critical
                                   } else if (percent < 0.5) {
-                                    progressColor = AppColors.vipGold; // Yellow for warning
+                                    progressColor =
+                                        AppColors.vipGold; // Yellow for warning
                                   }
 
                                   return Padding(
-                                    padding: const EdgeInsets.only(bottom: 12.0),
+                                    padding: const EdgeInsets.only(
+                                      bottom: 12.0,
+                                    ),
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
                                           children: [
                                             Text(
                                               'Key #${idx + 1} ($displayKey)',
-                                              style: AppTypography.bodyPrimary.copyWith(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                              ),
+                                              style: AppTypography.bodyPrimary
+                                                  .copyWith(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
                                             ),
                                             Text(
                                               remaining != null && limit != null
                                                   ? '$remaining / $limit left'
                                                   : 'Pending first request...',
-                                              style: AppTypography.bodySecondary.copyWith(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.bold,
-                                                color: remaining != null && limit != null
-                                                    ? progressColor
-                                                    : AppColors.textSecondary,
-                                              ),
+                                              style: AppTypography.bodySecondary
+                                                  .copyWith(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                    color:
+                                                        remaining != null &&
+                                                            limit != null
+                                                        ? progressColor
+                                                        : AppColors
+                                                              .textSecondary,
+                                                  ),
                                             ),
                                           ],
                                         ),
                                         const SizedBox(height: 6),
                                         ClipRRect(
-                                          borderRadius: BorderRadius.circular(4),
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
                                           child: LinearProgressIndicator(
                                             value: percent,
                                             backgroundColor: AppColors.border,
-                                            valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  progressColor,
+                                                ),
                                             minHeight: 4,
                                           ),
                                         ),
@@ -784,52 +920,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                           const SizedBox(height: 16),
                         ],
-                    ],
-                  ),
-                ),
-              ),
-
-              // Fixed version info block (hidden when keyboard is open for better space utility)
-              if (!isKeyboardOpen)
-                GestureDetector(
-                  onTap: _handleVersionTap,
-                  behavior: HitTestBehavior.opaque,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16.0),
-                    child: Column(
-                      children: [
-                        Image.asset(
-                          'assets/icon.png',
-                          height: 48,
-                          width: 48,
-                          fit: BoxFit.contain,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'USHERER v1.0.0',
-                          style: AppTypography.bodyPrimary.copyWith(
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.5,
-                            fontSize: 13,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Powered by Google Sheets & Firestore',
-                          style: AppTypography.bodySecondary.copyWith(
-                            fontSize: 10,
-                          ),
-                        ),
                       ],
                     ),
                   ),
                 ),
-            ],
+
+                // Fixed version info block (hidden when keyboard is open for better space utility)
+                if (!isKeyboardOpen)
+                  GestureDetector(
+                    onTap: _handleVersionTap,
+                    behavior: HitTestBehavior.opaque,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16.0),
+                      child: Column(
+                        children: [
+                          Image.asset(
+                            'assets/icon.png',
+                            height: 48,
+                            width: 48,
+                            fit: BoxFit.contain,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'USHERER v1.0.0',
+                            style: AppTypography.bodyPrimary.copyWith(
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.5,
+                              fontSize: 13,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                           RichText(
+                            text: TextSpan(
+                              style: AppTypography.bodySecondary.copyWith(
+                                fontSize: 10,
+                              ),
+                              children: [
+                                const TextSpan(text: 'Powered by '),
+                                TextSpan(
+                                  text: 'Bespokebuilds',
+                                  style: AppTypography.bodySecondary.copyWith(
+                                    fontSize: 10,
+                                    decoration: TextDecoration.underline,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.accent,
+                                  ),
+                                  recognizer: _bespokeTapRecognizer,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 }

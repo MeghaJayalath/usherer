@@ -19,6 +19,10 @@ class SheetsService {
   // Cache of resolved sheet tab names: key is rawDateName, value is sheetsActualTabName
   static final Map<String, String> _resolvedTabNames = {};
 
+  // Cache of resolved column indices per sheetName:
+  // key is sheetName (resolved), value is map of column name -> column index
+  static final Map<String, Map<String, int>> _resolvedColumnMappings = {};
+
   // Ensure authenticated client is present before making requests (background isolate resilient)
   Future<void> _ensureInitialized() async {
     if (_sheetsApi != null) return;
@@ -32,6 +36,14 @@ class SheetsService {
         'SheetsService has not been initialized with service account credentials yet.',
       );
     }
+  }
+
+  // Force re-initialization by clearing the current API instance.
+  // Called proactively on app resume (via WidgetsBindingObserver) and as a
+  // fallback retry when a write fails on iOS (expired/invalidated auth client).
+  Future<void> forceReinitialize() async {
+    _sheetsApi = null;
+    await _ensureInitialized();
   }
 
   // Initialize service account in foreground using assets
@@ -101,7 +113,28 @@ class SheetsService {
     return rawName;
   }
 
+  // Fetch all spreadsheet tab titles dynamically
+  Future<List<String>> getSheetTabNames() async {
+    final sheetId = AppConfig.spreadsheetId;
+    if (sheetId == null || sheetId.isEmpty) return [];
+
+    await _ensureInitialized();
+
+    try {
+      final spreadsheet = await _sheetsApi!.spreadsheets.get(sheetId);
+      return spreadsheet.sheets
+              ?.map((s) => s.properties?.title)
+              .whereType<String>()
+              .toList() ??
+          [];
+    } catch (e) {
+      print('Error getting sheet tab names: $e');
+      return [];
+    }
+  }
+
   // Performs case-insensitive, spacing-resilient, and abbreviated month matches (e.g. JUN -> JUNE)
+  // Also supports gracefully falling back to a base date sheet (e.g. 3RD JUNE ARR -> 3RD JUNE) if a suffixed sheet is not found.
   String? _findBestTabMatch(String target, List<String> available) {
     final cleanTarget = target.trim().toUpperCase().replaceAll(' ', '');
 
@@ -139,7 +172,129 @@ class SheetsService {
       }
     }
 
+    // 3. Fallback: If target ends with DEP or ARR, strip it and look for the base date match!
+    if (cleanTarget.endsWith('DEP') || cleanTarget.endsWith('ARR')) {
+      final baseTarget = cleanTarget.substring(0, cleanTarget.length - 3);
+
+      // Try exact match on base date
+      for (final title in available) {
+        final cleanTitle = title.trim().toUpperCase().replaceAll(' ', '');
+        if (cleanTitle == baseTarget) {
+          return title;
+        }
+      }
+
+      // Try abbreviated match on base date
+      String baseTargetAlt = baseTarget;
+      if (baseTarget.contains('JUNE')) {
+        baseTargetAlt = baseTarget.replaceAll('JUNE', 'JUN');
+      } else if (baseTarget.contains('JULY')) {
+        baseTargetAlt = baseTarget.replaceAll('JULY', 'JUL');
+      } else if (baseTarget.contains('SEPTEMBER')) {
+        baseTargetAlt = baseTarget.replaceAll('SEPTEMBER', 'SEP');
+      }
+
+      for (final title in available) {
+        final cleanTitle = title.trim().toUpperCase().replaceAll(' ', '');
+        String titleAlt = cleanTitle;
+        if (cleanTitle.contains('JUNE')) {
+          titleAlt = cleanTitle.replaceAll('JUNE', 'JUN');
+        } else if (cleanTitle.contains('JULY')) {
+          titleAlt = cleanTitle.replaceAll('JULY', 'JUL');
+        } else if (cleanTitle.contains('SEPTEMBER')) {
+          titleAlt = cleanTitle.replaceAll('SEPTEMBER', 'SEP');
+        }
+
+        if (titleAlt == baseTargetAlt) {
+          return title;
+        }
+      }
+    }
+
     return null;
+  }
+
+  // Ensures a sheet's column headers are scanned and cached in memory
+  Future<Map<String, int>> _ensureColumnMapping(String resolvedName) async {
+    if (_resolvedColumnMappings.containsKey(resolvedName)) {
+      return _resolvedColumnMappings[resolvedName]!;
+    }
+
+    final sheetId = AppConfig.spreadsheetId;
+    if (sheetId == null || sheetId.isEmpty) return {};
+
+    await _ensureInitialized();
+    try {
+      // Fetch first 10 rows to detect headers
+      final response = await _sheetsApi!.spreadsheets.values.get(
+        sheetId,
+        "'$resolvedName'!A1:Z10",
+      );
+      final rows = response.values;
+      if (rows != null && rows.isNotEmpty) {
+        int headerRowIndex = -1;
+        Map<String, int> colIndices = {};
+
+        for (int i = 0; i < rows.length; i++) {
+          final row = rows[i];
+          for (int j = 0; j < row.length; j++) {
+            final cell = row[j].toString().toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+            if (cell == 'vehicletype' || cell == 'vehicle') {
+              headerRowIndex = i;
+              break;
+            }
+          }
+          if (headerRowIndex != -1) {
+            final headerRow = rows[headerRowIndex];
+            for (int j = 0; j < headerRow.length; j++) {
+              final colName = headerRow[j].toString().toLowerCase().trim().replaceAll(' ', '_');
+              colIndices[colName] = j;
+            }
+            break;
+          }
+        }
+        if (colIndices.isNotEmpty) {
+          _resolvedColumnMappings[resolvedName] = colIndices;
+          return colIndices;
+        }
+      }
+    } catch (e) {
+      print('Error ensuring column mapping for $resolvedName: $e');
+    }
+    return {};
+  }
+
+  // Converts a 0-based column index to spreadsheet letter notation (e.g. 0 -> A, 27 -> AB)
+  String _colLetter(int index) {
+    if (index < 0) return '';
+    String letter = '';
+    int temp = index;
+    while (temp >= 0) {
+      letter = String.fromCharCode((temp % 26) + 65) + letter;
+      temp = (temp ~/ 26) - 1;
+    }
+    return letter;
+  }
+
+  // Resolves the spreadsheet column letter dynamically by matches with synonyms list
+  Future<String> _resolveColumnLetter(
+    String resolvedName,
+    List<String> synonyms,
+    String defaultLetter,
+  ) async {
+    final colIndices = await _ensureColumnMapping(resolvedName);
+    if (colIndices.isEmpty) return defaultLetter;
+
+    for (final syn in synonyms) {
+      final normalizedSyn = syn.toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+      for (final entry in colIndices.entries) {
+        final normalizedCol = entry.key.toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+        if (normalizedCol == normalizedSyn || normalizedCol.contains(normalizedSyn)) {
+          return _colLetter(entry.value);
+        }
+      }
+    }
+    return defaultLetter;
   }
 
   // Fetch groups and tourists from a specific Sheet tab
@@ -159,13 +314,47 @@ class SheetsService {
     try {
       final response = await _sheetsApi!.spreadsheets.values.get(
         sheetId,
-        "'$resolvedName'!A:O",
+        "'$resolvedName'!A:Z",
       );
 
       final rows = response.values;
       if (rows == null || rows.isEmpty) {
         return [];
       }
+
+      // Ensure headers are scanned and cached in _resolvedColumnMappings
+      final colIndices = await _ensureColumnMapping(resolvedName);
+
+      int getColIndex(List<String> synonyms, int defaultIdx) {
+        if (colIndices.isEmpty) return defaultIdx;
+        for (final syn in synonyms) {
+          final normalizedSyn = syn.toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+          for (final entry in colIndices.entries) {
+            final normalizedCol = entry.key.toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+            if (normalizedCol == normalizedSyn || normalizedCol.contains(normalizedSyn)) {
+              return entry.value;
+            }
+          }
+        }
+        return defaultIdx;
+      }
+
+      // Resolve indices dynamically
+      final int idxPickUp = getColIndex(['pick_up', 'pickup'], 0);
+      final int idxDropOff = getColIndex(['drop_off', 'dropoff'], 1);
+      final int idxVehicleType = getColIndex(['vehicle_type', 'vehicle'], 3);
+      final int idxNumberPlate = getColIndex(['number_plate', 'plate', 'vehicle_no'], 4);
+      final int idxDriverContact = getColIndex(['driver_contact_info', 'driver_contact', 'driver_phone'], 5);
+      final int idxFlightNum = getColIndex(['flight_number', 'flight'], 6);
+      final int idxHotelDepTime = getColIndex(['hotel_departure_time', 'hotel_dep', 'departure_time'], -1);
+      final int idxScheduledTime = getColIndex(['scheduled_time', 'scheduled'], 7);
+      final int idxActualTime = getColIndex(['actual_time', 'actual', 'live_eta', 'eta'], 8);
+      final int idxTouristName = getColIndex(['tourist_name', 'name', 'guest_name', 'tourist'], 9);
+      final int idxContactInfo = getColIndex(['contact_info', 'contact', 'guest_phone'], 10);
+      final int idxPriority = getColIndex(['priority'], 11);
+      final int idxHotel = getColIndex(['hotel'], 12);
+      final int idxHub = getColIndex(['hub'], 13);
+      final int idxNotes = getColIndex(['notes', 'remarks'], 14);
 
       List<TouristGroup> groups = [];
 
@@ -175,6 +364,7 @@ class SheetsService {
       int? currentSheetRow;
       DateTime? currentScheduledTime;
       String? currentLiveEta;
+      String? currentHotelDepartureTime;
       List<Tourist> currentTourists = [];
       List<List<String>> currentTouristsFlights = [];
 
@@ -228,63 +418,48 @@ class SheetsService {
             sheetRow: currentSheetRow,
             numberPlate: currentNumberPlate,
             driverContactInfo: currentDriverContactInfo,
+            hotelDepartureTime: currentHotelDepartureTime,
           ),
         );
 
         // Reset accumulators
         currentTourists.clear();
         currentTouristsFlights.clear();
+        currentHotelDepartureTime = null;
       }
 
-      // Start parsing from index 1 to skip header row
-      for (int i = 1; i < rows.length; i++) {
-        final row = rows[i];
-        final rowIndex =
-            i +
-            1; // 1-indexed row number in Sheets (row 1 is header, so index 1 is row 2)
+      // Start parsing after the header row (if detected, otherwise from row index 1)
+      int headerRowIdx = -1;
+      if (colIndices.isNotEmpty) {
+        for (int i = 0; i < rows.length && i < 10; i++) {
+          final row = rows[i];
+          for (int j = 0; j < row.length; j++) {
+            final cell = row[j].toString().toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+            if (cell == 'vehicletype' || cell == 'vehicle') {
+              headerRowIdx = i;
+              break;
+            }
+          }
+          if (headerRowIdx != -1) break;
+        }
+      }
+      final startRowIdx = headerRowIdx != -1 ? headerRowIdx + 1 : 1;
 
-        final String colA = row.isNotEmpty
-            ? row[0].toString().trim()
-            : ''; // pick_up
-        final String colB = row.length > 1
-            ? row[1].toString().trim()
-            : ''; // drop_off
-        final String colD = row.length > 3
-            ? row[3].toString().trim()
-            : ''; // vehicle_type
-        final String colE = row.length > 4
-            ? row[4].toString().trim()
-            : ''; // number_plate
-        final String colF = row.length > 5
-            ? row[5].toString().trim()
-            : ''; // driver_contact_info
-        final String colG = row.length > 6
-            ? row[6].toString().trim()
-            : ''; // flight_number
-        final String colH = row.length > 7
-            ? row[7].toString().trim()
-            : ''; // scheduled_time
-        final String colI = row.length > 8
-            ? row[8].toString().trim()
-            : ''; // actual_time (live_eta)
-        final String colJ = row.length > 9
-            ? row[9].toString().trim()
-            : ''; // tourist_name
-        final String colK = row.length > 10
-            ? row[10].toString().trim()
-            : ''; // contact_info
-        final String colL = row.length > 11
-            ? row[11].toString().trim()
-            : ''; // priority
-        final String colM = row.length > 12
-            ? row[12].toString().trim()
-            : ''; // hotel
-        final String colN = row.length > 13
-            ? row[13].toString().trim()
-            : ''; // hub
-        final String colO = row.length > 14
-            ? row[14].toString().trim()
-            : ''; // notes
+      for (int i = startRowIdx; i < rows.length; i++) {
+        final row = rows[i];
+        final rowIndex = i + 1; // 1-indexed row number in Sheets
+
+        String getCell(int idx) {
+          if (idx >= 0 && idx < row.length) {
+            return row[idx].toString().trim();
+          }
+          return '';
+        }
+
+        final String colD = getCell(idxVehicleType);
+        final String colE = getCell(idxNumberPlate);
+        final String colF = getCell(idxDriverContact);
+        final String colJ = getCell(idxTouristName);
 
         // Skip header/metadata rows - column D would contain the header label, not a real vehicle type
         final colDLower = colD
@@ -307,8 +482,11 @@ class SheetsService {
           currentNumberPlate = colE.isNotEmpty ? colE : null;
           currentDriverContactInfo = colF.isNotEmpty ? colF : null;
           currentSheetRow = rowIndex;
-          currentScheduledTime = _parseTime(colH);
-          currentLiveEta = _isValidTimeValue(colI) ? colI : null;
+          currentScheduledTime = _parseTime(getCell(idxScheduledTime));
+          currentLiveEta = _isValidTimeValue(getCell(idxActualTime)) ? getCell(idxActualTime) : null;
+          currentHotelDepartureTime = idxHotelDepTime != -1 && getCell(idxHotelDepTime).isNotEmpty
+              ? getCell(idxHotelDepTime)
+              : null;
         } else {
           // Captures number plate or driver contact info if they reside on subsequent tourist rows in the sheet
           if (currentNumberPlate == null && colE.isNotEmpty) {
@@ -322,6 +500,8 @@ class SheetsService {
         // Add tourist if there is a name
         if (currentVehicleType != null && colJ.isNotEmpty) {
           final touristId = 'tourist_$rowIndex';
+          final String colA = getCell(idxPickUp);
+          final String colB = getCell(idxDropOff);
           final pickUpVal = colA.toLowerCase() == 'true';
           final dropOffVal = colB.toLowerCase() == 'true';
 
@@ -337,14 +517,15 @@ class SheetsService {
               sheetRow: rowIndex,
               pickUp: pickUpVal,
               dropOff: dropOffVal,
-              priority: colL,
-              hotel: colM,
-              hub: colN,
-              notes: colO,
-              contactInfo: colK,
+              priority: getCell(idxPriority),
+              hotel: getCell(idxHotel),
+              hub: getCell(idxHub),
+              notes: getCell(idxNotes),
+              contactInfo: getCell(idxContactInfo),
             ),
           );
 
+          final String colG = getCell(idxFlightNum);
           if (colG.isNotEmpty) {
             final normalized = _normalizeFlightNumber(colG);
             currentTouristsFlights.add([normalized]);
@@ -386,28 +567,6 @@ class SheetsService {
       }
       rethrow;
     }
-  }
-
-  // Helper method to detect if a cell represents a flight number
-  bool _isFlightNumber(String val) {
-    String clean = val
-        .trim()
-        .replaceAll('|', '')
-        .replaceAll('-', '')
-        .replaceAll(' ', '')
-        .toUpperCase();
-    if (clean.startsWith('AL') &&
-        clean.length > 2 &&
-        RegExp(r'[0-9]').hasMatch(clean.substring(2))) {
-      clean = 'AI${clean.substring(2)}';
-    }
-    if (clean.isEmpty) return false;
-    // Flight numbers are between 3 and 8 chars, and contain at least one digit
-    if (clean.length < 3 || clean.length > 8) return false;
-    if (!clean.contains(RegExp(r'[0-9]'))) return false;
-    if (int.tryParse(clean) != null)
-      return false; // Not a phone number/pure index
-    return true;
   }
 
   // Validates that a cell value is a real time string (e.g. "14:30", "2:30 PM") not a header label
@@ -452,11 +611,15 @@ class SheetsService {
     try {
       final resolvedName = await _resolveSheetTabName(sheetName);
       await _ensureInitialized();
-      // Write directly to Column I!
-      final writeRange = "'$resolvedName'!I$row";
+      final String colLetter = await _resolveColumnLetter(
+        resolvedName,
+        ['actual_time', 'actual', 'live_eta', 'eta'],
+        'I',
+      );
+      final writeRange = "'$resolvedName'!$colLetter$row";
       await _writeToRange(writeRange, eta);
     } catch (e) {
-      print('writeEta error: $e');
+      print('writeEta error (after retry): $e');
     }
   }
 
@@ -469,12 +632,26 @@ class SheetsService {
         [val],
       ],
     });
-    await _sheetsApi!.spreadsheets.values.update(
-      valueRange,
-      sheetId,
-      range,
-      valueInputOption: 'USER_ENTERED',
-    );
+
+    try {
+      await _sheetsApi!.spreadsheets.values.update(
+        valueRange,
+        sheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+      );
+    } catch (e) {
+      // On iOS the OAuth2 client can expire or get invalidated silently.
+      // Re-initialize and retry exactly once before giving up.
+      print('_writeToRange failed (may be stale auth), re-initializing and retrying: $e');
+      await forceReinitialize();
+      await _sheetsApi!.spreadsheets.values.update(
+        valueRange,
+        sheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+      );
+    }
   }
 
   // Updates tourist checkbox status dynamically to Column A (pick_up) or Column B (drop_off)
@@ -493,20 +670,11 @@ class SheetsService {
 
       final String col = field == 'pickup' ? 'A' : 'B';
       final writeRange = "'$resolvedName'!$col$row";
-
-      final valueRange = sheets.ValueRange.fromJson({
-        'values': [
-          [active ? 'TRUE' : 'FALSE'],
-        ],
-      });
-      await _sheetsApi!.spreadsheets.values.update(
-        valueRange,
-        sheetId,
-        writeRange,
-        valueInputOption: 'USER_ENTERED',
-      );
+      await _writeToRange(writeRange, active ? 'TRUE' : 'FALSE');
     } catch (e) {
-      print('writeTouristStatus error: $e');
+      // _writeToRange already retried once internally; this is a final failure.
+      print('writeTouristStatus error (after retry): $e');
+      rethrow;
     }
   }
 
@@ -518,10 +686,17 @@ class SheetsService {
     try {
       final resolvedName = await _resolveSheetTabName(sheetName);
       await _ensureInitialized();
-      final writeRange = "'$resolvedName'!O$row";
+      final String colLetter = await _resolveColumnLetter(
+        resolvedName,
+        ['notes', 'remarks'],
+        'O',
+      );
+      final writeRange = "'$resolvedName'!$colLetter$row";
       await _writeToRange(writeRange, note);
     } catch (e) {
-      print('writeTouristNote error: $e');
+      // _writeToRange already retried once internally; this is a final failure.
+      print('writeTouristNote error (after retry): $e');
+      rethrow;
     }
   }
 

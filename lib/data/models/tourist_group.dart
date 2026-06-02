@@ -15,6 +15,7 @@ class TouristGroup {
   final int? sheetRow; // First row of this group in Google Sheets
   final String? numberPlate;
   final String? driverContactInfo;
+  final String? hotelDepartureTime;
 
   TouristGroup({
     required this.id,
@@ -28,6 +29,7 @@ class TouristGroup {
     this.sheetRow,
     this.numberPlate,
     this.driverContactInfo,
+    this.hotelDepartureTime,
   }) : tourists = List<Tourist>.from(tourists) {
     this.tourists.sort((a, b) {
       if (a.sheetRow != null && b.sheetRow != null) {
@@ -50,6 +52,7 @@ class TouristGroup {
       'sheetRow': sheetRow,
       'numberPlate': numberPlate,
       'driverContactInfo': driverContactInfo,
+      'hotelDepartureTime': hotelDepartureTime,
     };
   }
 
@@ -86,6 +89,7 @@ class TouristGroup {
       sheetRow: map['sheetRow'] as int?,
       numberPlate: map['numberPlate'],
       driverContactInfo: map['driverContactInfo'],
+      hotelDepartureTime: map['hotelDepartureTime'],
     );
   }
 
@@ -101,6 +105,7 @@ class TouristGroup {
     int? sheetRow,
     String? numberPlate,
     String? driverContactInfo,
+    String? hotelDepartureTime,
   }) {
     return TouristGroup(
       id: id ?? this.id,
@@ -114,6 +119,7 @@ class TouristGroup {
       sheetRow: sheetRow ?? this.sheetRow,
       numberPlate: numberPlate ?? this.numberPlate,
       driverContactInfo: driverContactInfo ?? this.driverContactInfo,
+      hotelDepartureTime: hotelDepartureTime ?? this.hotelDepartureTime,
     );
   }
 }
@@ -140,13 +146,14 @@ class TouristGroupAdapter extends TypeAdapter<TouristGroup> {
       sheetRow: fields[8] as int?,
       numberPlate: fields[9] as String?,
       driverContactInfo: fields[10] as String?,
+      hotelDepartureTime: fields[11] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, TouristGroup obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -168,6 +175,8 @@ class TouristGroupAdapter extends TypeAdapter<TouristGroup> {
       ..writeByte(9)
       ..write(obj.numberPlate)
       ..writeByte(10)
-      ..write(obj.driverContactInfo);
+      ..write(obj.driverContactInfo)
+      ..writeByte(11)
+      ..write(obj.hotelDepartureTime);
   }
 }

@@ -72,4 +72,12 @@ class HiveCache {
   static Future<void> setApiKeyQuotas(Map<String, dynamic> quotas) async {
     await settingsBox.put('apiKeyQuotas', quotas);
   }
+
+  static String getThemeMode() {
+    return settingsBox.get('themeMode', defaultValue: 'dark') as String;
+  }
+
+  static Future<void> setThemeMode(String mode) async {
+    await settingsBox.put('themeMode', mode);
+  }
 }

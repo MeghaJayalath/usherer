@@ -108,7 +108,7 @@ class _AdminUnlockDialogState extends State<AdminUnlockDialog> {
               decoration: InputDecoration(
                 hintText: 'Enter Admin Password',
                 errorText: _errorMessage,
-                suffixIcon: const Icon(
+                suffixIcon: Icon(
                   Icons.lock_outline,
                   color: AppColors.textSecondary,
                 ),
@@ -142,7 +142,7 @@ class _AdminUnlockDialogState extends State<AdminUnlockDialog> {
                     ),
                     onPressed: _isLoading ? null : _attemptUnlock,
                     child: _isLoading
-                        ? const SizedBox(
+                        ? SizedBox(
                             height: 20,
                             width: 20,
                             child: CircularProgressIndicator(

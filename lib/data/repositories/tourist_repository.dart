@@ -71,8 +71,21 @@ class TouristRepository {
     }
   }
 
+  // Fetch all available sheet tab titles from Google Sheets
+  static Future<List<String>> getSheetTabNames() async {
+    try {
+      return await _sheetsService.getSheetTabNames();
+    } catch (e) {
+      print('TouristRepository getSheetTabNames error: $e');
+      return [];
+    }
+  }
+
   // Watch Firestore stream and automatically mirror data to Hive local cache
   static Stream<List<TouristGroup>> watchGroups(String date) {
+    if (date.isEmpty) {
+      return Stream.value(<TouristGroup>[]);
+    }
     return _firestoreService.watchGroups(date).map((groups) {
       // Sort chronologically by scheduled time ascending
       groups.sort((a, b) {

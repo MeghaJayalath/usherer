@@ -65,6 +65,30 @@ class VehicleChunkCardState extends State<VehicleChunkCard> {
     return etaStr;
   }
 
+  String _formatHotelDepartureTime(String? timeStr) {
+    if (timeStr == null || timeStr.isEmpty) return 'No Time';
+    try {
+      final clean = timeStr.trim();
+      if (clean.toUpperCase().contains('AM') ||
+          clean.toUpperCase().contains('PM')) {
+        return clean;
+      }
+
+      final parts = clean.split(RegExp(r'[:.]'));
+      if (parts.length >= 2) {
+        final hour = int.tryParse(parts[0].replaceAll(RegExp(r'[^0-9]'), ''));
+        final minute = int.tryParse(parts[1].replaceAll(RegExp(r'[^0-9]'), ''));
+        if (hour != null && minute != null) {
+          final period = hour >= 12 ? 'PM' : 'AM';
+          final displayHour = hour % 12 == 0 ? 12 : hour % 12;
+          final displayMinute = minute.toString().padLeft(2, '0');
+          return '$displayHour:$displayMinute $period';
+        }
+      }
+    } catch (_) {}
+    return timeStr;
+  }
+
   IconData _getVehicleIcon(String type) {
     switch (type.toLowerCase()) {
       case 'bus':
@@ -212,32 +236,72 @@ class VehicleChunkCardState extends State<VehicleChunkCard> {
                       ),
                     ],
                   ),
-                  const Divider(color: AppColors.border, height: 24),
-                  // Time section
+                  Divider(color: AppColors.border, height: 24),
+                   // Time section
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'SCHEDULED',
-                            style: AppTypography.bodySecondary.copyWith(
-                              fontSize: 10,
-                              letterSpacing: 1.2,
+                      if (widget.group.hotelDepartureTime != null) ...[
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'HOTEL DEP',
+                              style: AppTypography.bodySecondary.copyWith(
+                                fontSize: 10,
+                                letterSpacing: 1.2,
+                                color: AppColors.accent,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            DateFormat(
-                              'hh:mm a',
-                            ).format(widget.group.scheduledTime),
-                            style: AppTypography.bodyPrimary.copyWith(
-                              fontWeight: FontWeight.bold,
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatHotelDepartureTime(widget.group.hotelDepartureTime),
+                              style: AppTypography.bodyPrimary.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'FLIGHT SCHED',
+                              style: AppTypography.bodySecondary.copyWith(
+                                fontSize: 10,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              DateFormat('hh:mm a').format(widget.group.scheduledTime),
+                              style: AppTypography.bodyPrimary.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'SCHEDULED',
+                              style: AppTypography.bodySecondary.copyWith(
+                                fontSize: 10,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              DateFormat('hh:mm a').format(widget.group.scheduledTime),
+                              style: AppTypography.bodyPrimary.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       ValueListenableBuilder<Set<String>>(
                         valueListenable: FlightRepository.pollingFlights,
                         builder: (context, pollingSet, _) {
@@ -410,8 +474,8 @@ class VehicleChunkCardState extends State<VehicleChunkCard> {
             secondChild: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.0),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: Divider(color: AppColors.border, height: 1),
                 ),
                 const SizedBox(height: 10),
