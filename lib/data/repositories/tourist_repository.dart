@@ -43,8 +43,19 @@ class TouristRepository {
       // This prevents connected clients from refreshing their UI completely
       await _firestoreService.syncAllGroups(date, groups);
 
-      // Sort chronologically by scheduled time ascending
+      // Sort chronologically by hotel departure time if available, otherwise by flight scheduled time
       groups.sort((a, b) {
+        final timeA = a.getParsedHotelDepartureTime();
+        final timeB = b.getParsedHotelDepartureTime();
+        if (timeA != null && timeB != null) {
+          final cmp = timeA.compareTo(timeB);
+          if (cmp != 0) return cmp;
+        } else if (timeA != null) {
+          return -1;
+        } else if (timeB != null) {
+          return 1;
+        }
+
         final timeCompare = a.scheduledTime.compareTo(b.scheduledTime);
         if (timeCompare != 0) return timeCompare;
         return (a.sheetRow ?? 0).compareTo(b.sheetRow ?? 0);
@@ -87,8 +98,19 @@ class TouristRepository {
       return Stream.value(<TouristGroup>[]);
     }
     return _firestoreService.watchGroups(date).map((groups) {
-      // Sort chronologically by scheduled time ascending
+      // Sort chronologically by hotel departure time if available, otherwise by flight scheduled time
       groups.sort((a, b) {
+        final timeA = a.getParsedHotelDepartureTime();
+        final timeB = b.getParsedHotelDepartureTime();
+        if (timeA != null && timeB != null) {
+          final cmp = timeA.compareTo(timeB);
+          if (cmp != 0) return cmp;
+        } else if (timeA != null) {
+          return -1;
+        } else if (timeB != null) {
+          return 1;
+        }
+
         final timeCompare = a.scheduledTime.compareTo(b.scheduledTime);
         if (timeCompare != 0) return timeCompare;
         return (a.sheetRow ?? 0).compareTo(b.sheetRow ?? 0);

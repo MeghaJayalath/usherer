@@ -93,6 +93,38 @@ class TouristGroup {
     );
   }
 
+  // Parses hotelDepartureTime string into a comparable DateTime (on a fixed date)
+  DateTime? getParsedHotelDepartureTime() {
+    if (hotelDepartureTime == null || hotelDepartureTime!.trim().isEmpty) return null;
+    final clean = hotelDepartureTime!.trim().toUpperCase();
+    final now = DateTime(2000, 1, 1); // Fixed date for pure time comparisons
+
+    try {
+      // 1. Format "HH:mm" (24-hour, e.g. "14:30")
+      if (RegExp(r'^\d{1,2}[:\.]\d{2}$').hasMatch(clean)) {
+        final parts = clean.split(RegExp(r'[:\.]'));
+        final hour = int.parse(parts[0]);
+        final min = int.parse(parts[1]);
+        return DateTime(now.year, now.month, now.day, hour, min);
+      }
+
+      // 2. Format "hh:mm a" (12-hour, e.g. "2:30 PM" or "02:30 PM")
+      if (RegExp(r'^\d{1,2}[:\.]\d{2}\s*(AM|PM)$').hasMatch(clean)) {
+        final hasPM = clean.endsWith('PM');
+        final cleanTime = clean.replaceAll(RegExp(r'\s*(AM|PM)'), '');
+        final parts = cleanTime.split(RegExp(r'[:\.]'));
+        int hour = int.parse(parts[0]);
+        final min = int.parse(parts[1]);
+        if (hasPM && hour < 12) hour += 12;
+        if (!hasPM && hour == 12) hour = 0;
+        return DateTime(now.year, now.month, now.day, hour, min);
+      }
+    } catch (_) {
+      // Ignore parsing errors
+    }
+    return null;
+  }
+
   TouristGroup copyWith({
     String? id,
     String? vehicleType,

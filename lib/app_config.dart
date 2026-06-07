@@ -2,8 +2,8 @@ import 'data/local/hive_cache.dart';
 
 class AppConfig {
   static const List<String> _flightApiKeys = [
-    // '06c40c5377msh4a0ab91154f66d1p1be5cdjsn341d88703e9d',
-    // '01f0d883a7mshb6067de60391043p18cf3bjsn4567e0ff843b',
+    '06c40c5377msh4a0ab91154f66d1p1be5cdjsn341d88703e9d',
+    '01f0d883a7mshb6067de60391043p18cf3bjsn4567e0ff843b',
   ];
 
   static List<String> get flightApiKeys => List.unmodifiable(_flightApiKeys);

@@ -291,7 +291,16 @@ class DashboardController extends ChangeNotifier {
 
     for (int i = 0; i < _groups.length; i++) {
       final group = _groups[i];
-      final timeStr = format.format(group.scheduledTime);
+      
+      String timeStr;
+      final parsedHotelDep = group.getParsedHotelDepartureTime();
+      if (parsedHotelDep != null) {
+        timeStr = format.format(parsedHotelDep);
+      } else if (group.hotelDepartureTime != null && group.hotelDepartureTime!.isNotEmpty) {
+        timeStr = group.hotelDepartureTime!;
+      } else {
+        timeStr = format.format(group.scheduledTime);
+      }
 
       if (timeStr != lastTimeStr) {
         items.add(TimeHeaderItem(timeStr: timeStr, isFirst: i == 0));

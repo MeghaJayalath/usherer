@@ -238,7 +238,7 @@ class SheetsService {
         for (int i = 0; i < rows.length; i++) {
           final row = rows[i];
           for (int j = 0; j < row.length; j++) {
-            final cell = row[j].toString().toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+            final cell = row[j].toString().toLowerCase().replaceAll(RegExp(r'[\s_]+'), '');
             if (cell == 'vehicletype' || cell == 'vehicle') {
               headerRowIndex = i;
               break;
@@ -247,7 +247,7 @@ class SheetsService {
           if (headerRowIndex != -1) {
             final headerRow = rows[headerRowIndex];
             for (int j = 0; j < headerRow.length; j++) {
-              final colName = headerRow[j].toString().toLowerCase().trim().replaceAll(' ', '_');
+              final colName = headerRow[j].toString().toLowerCase().trim().replaceAll(RegExp(r'\s+'), '_');
               colIndices[colName] = j;
             }
             break;
@@ -286,10 +286,18 @@ class SheetsService {
     if (colIndices.isEmpty) return defaultLetter;
 
     for (final syn in synonyms) {
-      final normalizedSyn = syn.toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+      final normalizedSyn = syn.toLowerCase().replaceAll(RegExp(r'[\s_]+'), '');
+      // First pass: Exact match
       for (final entry in colIndices.entries) {
-        final normalizedCol = entry.key.toLowerCase().replaceAll('_', '').replaceAll(' ', '');
-        if (normalizedCol == normalizedSyn || normalizedCol.contains(normalizedSyn)) {
+        final normalizedCol = entry.key.toLowerCase().replaceAll(RegExp(r'[\s_]+'), '');
+        if (normalizedCol == normalizedSyn) {
+          return _colLetter(entry.value);
+        }
+      }
+      // Second pass: Fuzzy match
+      for (final entry in colIndices.entries) {
+        final normalizedCol = entry.key.toLowerCase().replaceAll(RegExp(r'[\s_]+'), '');
+        if (normalizedCol.contains(normalizedSyn)) {
           return _colLetter(entry.value);
         }
       }
@@ -308,6 +316,10 @@ class SheetsService {
     }
 
     final resolvedName = await _resolveSheetTabName(sheetName);
+
+    // Always bust the column-mapping cache before syncing so any sheet structure
+    // changes (added/renamed/merged columns) are picked up fresh every time.
+    _resolvedColumnMappings.remove(resolvedName);
 
     await _ensureInitialized();
 
@@ -328,10 +340,18 @@ class SheetsService {
       int getColIndex(List<String> synonyms, int defaultIdx) {
         if (colIndices.isEmpty) return defaultIdx;
         for (final syn in synonyms) {
-          final normalizedSyn = syn.toLowerCase().replaceAll('_', '').replaceAll(' ', '');
+          final normalizedSyn = syn.toLowerCase().replaceAll(RegExp(r'[\s_]+'), '');
+          // First pass: Exact match
           for (final entry in colIndices.entries) {
-            final normalizedCol = entry.key.toLowerCase().replaceAll('_', '').replaceAll(' ', '');
-            if (normalizedCol == normalizedSyn || normalizedCol.contains(normalizedSyn)) {
+            final normalizedCol = entry.key.toLowerCase().replaceAll(RegExp(r'[\s_]+'), '');
+            if (normalizedCol == normalizedSyn) {
+              return entry.value;
+            }
+          }
+          // Second pass: Fuzzy match (contains)
+          for (final entry in colIndices.entries) {
+            final normalizedCol = entry.key.toLowerCase().replaceAll(RegExp(r'[\s_]+'), '');
+            if (normalizedCol.contains(normalizedSyn)) {
               return entry.value;
             }
           }
@@ -356,6 +376,10 @@ class SheetsService {
       final int idxHub = getColIndex(['hub'], 13);
       final int idxNotes = getColIndex(['notes', 'remarks'], 14);
 
+      // DEBUG: Print resolved column mappings
+      print('DEBUG COLUMNS: rawMapping=$colIndices');
+      print('DEBUG INDICES: hotelDepTime=$idxHotelDepTime, scheduledTime=$idxScheduledTime, flightNum=$idxFlightNum, vehicleType=$idxVehicleType, touristName=$idxTouristName');
+
       List<TouristGroup> groups = [];
 
       String? currentVehicleType;
@@ -367,6 +391,12 @@ class SheetsService {
       String? currentHotelDepartureTime;
       List<Tourist> currentTourists = [];
       List<List<String>> currentTouristsFlights = [];
+
+      // Tracking variables for merged cells inheritance (e.g. flights/times spanning multiple vehicles)
+      String? lastFlightNumber;
+      DateTime? lastScheduledTime;
+      String? lastHotelDepartureTime;
+      String? lastLiveEta;
 
       void saveCurrentGroup() {
         if (currentVehicleType == null || currentTourists.isEmpty) return;
@@ -475,6 +505,27 @@ class SheetsService {
             colDLower == 'slno';
         if (isHeaderRow) continue;
 
+        // Update last seen tracking values for merged cells inheritance
+        final String rawFlight = getCell(idxFlightNum);
+        if (rawFlight.isNotEmpty) {
+          lastFlightNumber = _normalizeFlightNumber(rawFlight);
+        }
+
+        final String rawScheduled = getCell(idxScheduledTime);
+        if (_isValidTimeValue(rawScheduled)) {
+          lastScheduledTime = _parseTime(rawScheduled);
+        }
+
+        final String rawHotelDep = idxHotelDepTime != -1 ? getCell(idxHotelDepTime) : '';
+        if (rawHotelDep.isNotEmpty) {
+          lastHotelDepartureTime = rawHotelDep;
+        }
+
+        final String rawActual = getCell(idxActualTime);
+        if (_isValidTimeValue(rawActual)) {
+          lastLiveEta = rawActual;
+        }
+
         // If Column D has a vehicle type, we save the previous group and start a new one
         if (colD.isNotEmpty) {
           saveCurrentGroup();
@@ -482,11 +533,21 @@ class SheetsService {
           currentNumberPlate = colE.isNotEmpty ? colE : null;
           currentDriverContactInfo = colF.isNotEmpty ? colF : null;
           currentSheetRow = rowIndex;
-          currentScheduledTime = _parseTime(getCell(idxScheduledTime));
-          currentLiveEta = _isValidTimeValue(getCell(idxActualTime)) ? getCell(idxActualTime) : null;
-          currentHotelDepartureTime = idxHotelDepTime != -1 && getCell(idxHotelDepTime).isNotEmpty
-              ? getCell(idxHotelDepTime)
-              : null;
+          
+          currentScheduledTime = rawScheduled.isNotEmpty
+              ? _parseTime(rawScheduled)
+              : (lastScheduledTime ?? DateTime.now());
+              
+          currentLiveEta = rawActual.isNotEmpty
+              ? (_isValidTimeValue(rawActual) ? rawActual : null)
+              : lastLiveEta;
+
+          currentHotelDepartureTime = rawHotelDep.isNotEmpty
+              ? rawHotelDep
+              : lastHotelDepartureTime;
+
+          // DEBUG: Trace parsed values for each vehicle group
+          print('DEBUG VEHICLE [$rowIndex] "$colD" | rawHotelDep="$rawHotelDep" inherited="${lastHotelDepartureTime}" → final="${currentHotelDepartureTime}" | rawScheduled="$rawScheduled" inherited="${lastScheduledTime}" → final="${currentScheduledTime}" | rawFlight="$rawFlight" inherited="${lastFlightNumber}" | idxHotelDep=$idxHotelDepTime');
         } else {
           // Captures number plate or driver contact info if they reside on subsequent tourist rows in the sheet
           if (currentNumberPlate == null && colE.isNotEmpty) {
@@ -530,7 +591,11 @@ class SheetsService {
             final normalized = _normalizeFlightNumber(colG);
             currentTouristsFlights.add([normalized]);
           } else {
-            currentTouristsFlights.add([]);
+            if (lastFlightNumber != null) {
+              currentTouristsFlights.add([lastFlightNumber]);
+            } else {
+              currentTouristsFlights.add([]);
+            }
           }
         }
       }
