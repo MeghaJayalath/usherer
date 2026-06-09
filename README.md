@@ -81,8 +81,3 @@ Start your app in debug or release mode:
 ```bash
 flutter run
 ```
-
----
-
-## 📄 License
-This project is for personal use and operational coordination. Designed with ❤️ for flawless tourist transitions.
